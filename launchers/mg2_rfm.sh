@@ -3,7 +3,7 @@
 reframe_basedir=/glade/work/bneuman/reframe_ncar/reframe
 reframe_testdir=/glade/work/bneuman/reframe_ncar/tests
 reframe_configdir=/glade/work/bneuman/reframe_ncar
-reframe_logdir=/glade/derecho/$USER/scratch/rfm_logs
+reframe_logdir=/glade/derecho/scratch/$USER/rfm_logs
 
 reframe_condaenv=/glade/work/bneuman/conda-envs/reframe
 
@@ -13,4 +13,4 @@ conda activate ${reframe_condaenv}
 cd $reframe_basedir
 mkdir -P ${reframe_logdir}
  
-./bin/reframe -C $reframe_configdir/config.py -c $reframe_testdir/cm1/cm1_simple_tests.py --system casper:compute -r | tee $reframe_logdir/reframe.log
+./bin/reframe -C $reframe_configdir/config.py -c $reframe_testdir/mg2/mg2_tests.py -n Mg2ProdTest --system casper:compute -r --purge-env | tee $reframe_logdir/reframe.log

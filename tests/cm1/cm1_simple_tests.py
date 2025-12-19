@@ -127,7 +127,7 @@ class CM1FullTest(CM1BaseTest):
     @run_after('run')
     def wait_for_completion(self):
         import time
-        time.sleep(20)
+        time.sleep(60)
 
     @sanity_function
     def validate_output(self):

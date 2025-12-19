@@ -1,9 +1,10 @@
 """
 Simple mg2 Test Suite - Compilation and Quick Validation Only
 
-This test suite contains two tests:
-1. mg2CompileTest - Verify mg2 compiles successfully
-2. mg2QuickTest - Quick validation run with basic checks
+This test suite contains these tests:
+1. Mg2CompileTest - Verify mg2 compiles successfully
+2. Mg2ProdTest - Quick validation compile and run of a 16 column run
+Others in production
 """
 
 import reframe as rfm
@@ -14,8 +15,8 @@ import reframe.utility.sanity as sn
 # Pass ElemTypeParam 
 # ============================================================================
 
-class ElemTypeParam(rfm.RegressionMixin):
-    elem_type = parameter(['float', 'double'])
+# class ElemTypeParam(rfm.RegressionMixin):
+#     elem_type = parameter(['float', 'double'])
 
 # ============================================================================
 # BASE TEST CLASS
@@ -38,6 +39,7 @@ class Mg2BaseTest(rfm.RegressionTest):
     num_tasks_per_node = 16
     time_limit = '10m'
 
+    # Define the flags necessary for each environment type
     fflags = variable(dict, value={
         'intel': ['-O1 -ffp-contract=fast -ffree-form -ffree-line-length-none', '-D_MPI'],
         'gnu':   ['-g -O3 -fp-model fast -ftz', '-D_MPI']
@@ -52,9 +54,6 @@ class Mg2BaseTest(rfm.RegressionTest):
             'cd mg2/v14',
             'make clean'
         ]
-        
-        # Adding required values to make command
-        self.build_system.options = [f'pcols={self.num_tasks}', f'COMPILER={self.current_environ.name}']
 
         # Load and link the mkl module
         self.modules = ['mkl']
@@ -62,17 +61,15 @@ class Mg2BaseTest(rfm.RegressionTest):
     @run_before('compile')
     def set_compiler_flags(self):
         self.build_system.ldflags = ['${MKLROOT}/lib/intel64 -lmkl_rt']
-        self.build_system.fflags = self.fflags.get(environ, [])
 
-        if self.current_environ.name == 'gnu':
-            self.build_system.fflags = ['-O1 -ffp-contract=fast -ffree-form -ffree-line-length-none', '-D_MPI']
-        if self.current_environ.name == 'intel':      
-            self.build_system.fflags = ['-g -O3 -fp-model fast -ftz', '-D_MPI']
+        # Adding required values to make command
+        self.build_system.options = [f'pcols={self.num_tasks}', f'COMPILER={self.current_environ.name}']
+        self.build_system.fflags = self.fflags.get(self.current_environ.name, [])
+
 
     @run_before('run')
     def setup_run_environment(self):
         """Set up runtime environment"""
-        # Copy necessary input files
         self.prerun_cmds = [
             f'cd mg2/v14'
         ]

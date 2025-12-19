@@ -1,6 +1,6 @@
 #!/bin/bash
 
-reframe_basedir=/glade/work/bneuman/reframe
+reframe_basedir=/glade/work/bneuman/reframe_ncar/reframe
 reframe_testdir=/glade/work/bneuman/reframe_ncar/tests
 reframe_configdir=/glade/work/bneuman/reframe_ncar
 reframe_logdir=/glade/derecho/$USER/scratch/rfm_logs
