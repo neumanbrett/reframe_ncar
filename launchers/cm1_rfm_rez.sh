@@ -13,4 +13,4 @@ conda activate ${reframe_condaenv}
 cd $reframe_basedir
 mkdir -p ${reframe_logdir}
  
-./bin/reframe -C $reframe_configdir/config.py -c $reframe_testdir/cm1/cm1_simple_tests.py -n CM1ScaleTest --system casper:compute-oldhtc -r | tee $reframe_logdir/reframe.log
+./bin/reframe -C $reframe_configdir/config.py -c $reframe_testdir/cm1/cm1_simple_tests.py -n CM1ScaleTest --system casper:compute --job-option='-q system' -r | tee $reframe_logdir/reframe.log

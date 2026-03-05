@@ -8,6 +8,7 @@ This test suite contains two tests:
 
 import reframe as rfm
 import reframe.utility.sanity as sn
+import time
 
 # ============================================================================
 # BASE TEST CLASS
@@ -22,8 +23,8 @@ class FastEddyBaseTest(rfm.RegressionTest):
     
     # Fasteddy source directories
     fasteddy_source_dir = variable(str, value='/glade/work/bneuman/reframe_apps/fasteddy/fasteddy_a100')
-    exe_dir = 'SRC/FEMAIN'
-    data_dir = 'tutorials/examples'
+    exe_dir = variable(str, value=fasteddy_source_dir+'/SRC/FEMAIN')
+    data_dir = variable(str, value=fasteddy_source_dir+'/tutorials/examples')
     
     # Build configuration
     build_system = 'Make'
@@ -32,11 +33,19 @@ class FastEddyBaseTest(rfm.RegressionTest):
     executable = 'set_gpu_rank ./FastEddy'
     executable_opts = ['Example02_CBL_veryshort.in']
 
-    num_tasks = 4
+    num_nodes = 2
+    num_tasks = 8
     num_tasks_per_node = 4
     time_limit = '20m'
 
     num_gpus_per_node = 4
+
+    # @run_after('init')
+    # def set_resources(self):
+    #     self.num_nodes = 2
+    #     self.num_tasks = 8
+    #     self.num_tasks_per_node = 4
+    #     self.num_gpus_per_node = 4
 
     @run_before('compile')
     def setup_build_environment(self):
@@ -47,7 +56,7 @@ class FastEddyBaseTest(rfm.RegressionTest):
         # Copy source files to stage directory
         self.prebuild_cmds = [
             f'cp -r {self.fasteddy_source_dir} .',
-            f'cd fasteddy_a100/{self.exe_dir}',
+            f'cd {self.exe_dir}',
             'make clean',
             'module list'
         ]
@@ -73,8 +82,8 @@ class FastEddyBaseTest(rfm.RegressionTest):
         #self.modules = ['-netcdf', 'netcdf-mpi/4.9.2', 'parallel-netcdf/1.14.0', 'parallelio/2.6.5', 'hdf5-mpi/1.12.3']
         # Copy the exe and input file
         self.prerun_cmds = [
-            f'cp -r fasteddy_a100/{self.exe_dir}/FastEddy .',
-            f'cp -r fasteddy_a100/{self.data_dir}/Example02_CBL_veryshort.in .',
+            f'cp -r {self.exe_dir}/FastEddy .',
+            f'cp -r {self.data_dir}/Example02_CBL_veryshort.in .',
             'module list'
             #'module --force purge',
             #'module load ncarenv/24.12 nvhpc/24.11 cuda/12.3.2 ncarcompilers/1.0.0 openmpi/5.0.6 -netcdf netcdf-mpi/4.9.2 parallel-netcdf/1.14.0 parallelio/2.6.5 hdf5-mpi/1.12.3 ucx/1.17.0'
@@ -84,10 +93,15 @@ class FastEddyBaseTest(rfm.RegressionTest):
         #     'gpu_type': 'a100'
         # }
         self.job.options = [
-            f'ngpus={self.num_tasks}',
+            f'ngpus={self.num_tasks_per_node}',
             'gpu_type=a100',
             'mem=100gb'
         ]
+    
+    # def set_pbs_select(self):
+    #     self.job.options = [
+    #         '-l select=2:mpiprocs=4:ncpus=4:ngpus=4:gpu_type=a100:mem=100gb'
+    #     ]
 
 @rfm.simple_test
 class FastEddyFullTest(FastEddyBaseTest):
@@ -239,6 +253,230 @@ class FastEddySWStackTest(FastEddyBaseTest):
     time_limit = '20m'
 
     num_gpus_per_node = 4
+
+    @sanity_function
+    def validate_output(self):
+        """Check that simulation completed successfully"""
+        return sn.assert_found(
+            r'!!!!!	  TIMESTEP PERFORMANCE',
+            self.stdout,
+            msg='Fasteddy did not start a timestep'
+        )
+    
+    @performance_function('s')
+    def total_time(self):
+        """Extract total test time in seconds"""
+        return sn.extractsingle(
+            r'^\s*(\d+\.\d+)\s+\|\s+\d+\s+\|',
+            self.stdout,
+            1,
+            float
+        )
+    
+    @performance_function('s')
+    def time_per_step(self):
+        """Extract Time/step (s) - third column"""
+        return sn.extractsingle(
+            r'^\s*\d+\.\d+\s+\|\s+\d+\s+\|\s+(\d+\.\d+)',
+            self.stdout,
+            1,
+            float
+        )
+    
+@rfm.simple_test
+class FastEddyMultiGPUTest(FastEddyBaseTest):
+    """Base class for Fasteddy tests with common configuration"""
+    
+    # Valid systems and environments
+    valid_systems = ['casper:gpu-mpi']
+    valid_prog_environs = ['cuda', 'cuda-dev']
+    
+    # Fasteddy source directories
+    #fasteddy_source_dir = variable(str, value='/glade/work/bneuman/reframe_apps/fasteddy/fasteddy_a100')
+    #exe_dir = variable(str, value='/glade/work/bneuman/reframe_apps/fasteddy/fasteddy_a100/SRC/FEMAIN')
+    #data_dir = variable(str, value='/glade/work/bneuman/reframe_apps/fasteddy/fasteddy_a100/tutorials/examples')
+    
+    # # Build configuration
+    # build_system = 'Make'
+    
+    # #sourcesdir = '.'
+    # executable = 'set_gpu_rank ./FastEddy'
+    executable_opts = ['Example02_CBL_veryshort_8gpu.in']
+
+    num_nodes = 2
+    num_tasks = 8
+    num_tasks_per_node = 4
+    time_limit = '20m'
+
+    num_gpus_per_node = 4
+
+    # @run_before('compile')
+    # def setup_build_environment(self):
+        
+    #     # Unload all modules
+    #     #self.modules.unload_all()
+    #     #self.modules = ['-netcdf', 'netcdf-mpi/4.9.2 parallel-netcdf/1.14.0 parallelio/2.6.5 hdf5-mpi/1.12.3 ucx/1.17.0']
+    #     # Copy source files to stage directory
+    #     self.prebuild_cmds = [
+    #         f'cp -r {self.fasteddy_source_dir} .',
+    #         f'cd fasteddy_a100/{self.exe_dir}',
+    #         'make clean',
+    #         'module list'
+    #     ]
+    #     # Unload the netcdf module with causes issues with auto load from compiler and swapping hdf5
+        
+
+    #     # CC = gcc
+    #     #CFLAGS = -O2 -fopenmp
+
+    #     #FC = gfortran
+    #     #FFLAGS = -O2 -fopenmp
+    #     # Environment specific Makefileet netCDF paths based on environment
+    #     # if self.current_environ.name == 'gnu':
+    #     #     #'cp -f Makefile.gnu Makefile'
+    #     #     self.build_system.cflags = ['-O2','-fopenmp']
+    #     #     self.build_system.fflags = ['-O2','-fopenmp']
+    
+    @run_before('run')
+    def setup_run_environment(self):
+        """Set up runtime environment"""
+        # Unload conflict
+        #self.modules.remove
+        #self.modules = ['-netcdf', 'netcdf-mpi/4.9.2', 'parallel-netcdf/1.14.0', 'parallelio/2.6.5', 'hdf5-mpi/1.12.3']
+        # Copy the exe and input file
+        self.prerun_cmds = [
+            f'cp -r {self.exe_dir}/FastEddy .',
+            f'cp -r {self.data_dir}/Example02_CBL_veryshort_8gpu.in .',
+            'module list'
+            #'module --force purge',
+            #'module load ncarenv/24.12 nvhpc/24.11 cuda/12.3.2 ncarcompilers/1.0.0 openmpi/5.0.6 -netcdf netcdf-mpi/4.9.2 parallel-netcdf/1.14.0 parallelio/2.6.5 hdf5-mpi/1.12.3 ucx/1.17.0'
+        ]
+
+        # self.extra_resources ={
+        #     'gpu_type': 'a100'
+        # }
+        self.job.options = [
+            f'ngpus={self.num_tasks_per_node}',
+            'gpu_type=a100',
+            'mem=100gb'
+        ]
+    
+    # def set_pbs_select(self):
+    #     self.job.options = [
+    #         '-l select=2:mpiprocs=4:ncpus=4:ngpus=4:gpu_type=a100:mem=100gb'
+    #     ]
+
+    @sanity_function
+    def validate_output(self):
+        """Check that simulation completed successfully"""
+        return sn.assert_found(
+            r'!!!!!	  TIMESTEP PERFORMANCE',
+            self.stdout,
+            msg='Fasteddy did not start a timestep'
+        )
+    
+    @performance_function('s')
+    def total_time(self):
+        """Extract total test time in seconds"""
+        return sn.extractsingle(
+            r'^\s*(\d+\.\d+)\s+\|\s+\d+\s+\|',
+            self.stdout,
+            1,
+            float
+        )
+    
+    @performance_function('s')
+    def time_per_step(self):
+        """Extract Time/step (s) - third column"""
+        return sn.extractsingle(
+            r'^\s*\d+\.\d+\s+\|\s+\d+\s+\|\s+(\d+\.\d+)',
+            self.stdout,
+            1,
+            float
+        )
+    
+@rfm.simple_test
+class FastEddyLongMultiGPUTest(FastEddyBaseTest):
+    """Base class for Fasteddy tests with common configuration"""
+    
+    # Valid systems and environments
+    valid_systems = ['casper:gpu-mpi']
+    valid_prog_environs = ['cuda']
+    
+    # Fasteddy source directories
+    #fasteddy_source_dir = variable(str, value='/glade/work/bneuman/reframe_apps/fasteddy/fasteddy_a100')
+    #exe_dir = variable(str, value='/glade/work/bneuman/reframe_apps/fasteddy/fasteddy_a100/SRC/FEMAIN')
+    #data_dir = variable(str, value='/glade/work/bneuman/reframe_apps/fasteddy/fasteddy_a100/tutorials/examples')
+    
+    # # Build configuration
+    # build_system = 'Make'
+    
+    # #sourcesdir = '.'
+    # executable = 'set_gpu_rank ./FastEddy'
+    executable_opts = ['Example02_CBL_short_8gpu.in']
+
+    num_nodes = 2
+    num_tasks = 8
+    num_tasks_per_node = 4
+    time_limit = '40m'
+
+    num_gpus_per_node = 4
+
+    # @run_before('compile')
+    # def setup_build_environment(self):
+        
+    #     # Unload all modules
+    #     #self.modules.unload_all()
+    #     #self.modules = ['-netcdf', 'netcdf-mpi/4.9.2 parallel-netcdf/1.14.0 parallelio/2.6.5 hdf5-mpi/1.12.3 ucx/1.17.0']
+    #     # Copy source files to stage directory
+    #     self.prebuild_cmds = [
+    #         f'cp -r {self.fasteddy_source_dir} .',
+    #         f'cd fasteddy_a100/{self.exe_dir}',
+    #         'make clean',
+    #         'module list'
+    #     ]
+    #     # Unload the netcdf module with causes issues with auto load from compiler and swapping hdf5
+        
+
+    #     # CC = gcc
+    #     #CFLAGS = -O2 -fopenmp
+
+    #     #FC = gfortran
+    #     #FFLAGS = -O2 -fopenmp
+    #     # Environment specific Makefileet netCDF paths based on environment
+    #     # if self.current_environ.name == 'gnu':
+    #     #     #'cp -f Makefile.gnu Makefile'
+    #     #     self.build_system.cflags = ['-O2','-fopenmp']
+    #     #     self.build_system.fflags = ['-O2','-fopenmp']
+
+    @run_before('run')
+    def setup_run_environment(self):
+        """Set up runtime environment"""
+        # Unload conflict
+        #self.modules.remove
+        #self.modules = ['-netcdf', 'netcdf-mpi/4.9.2', 'parallel-netcdf/1.14.0', 'parallelio/2.6.5', 'hdf5-mpi/1.12.3']
+        # Copy the exe and input file
+        self.prerun_cmds = [
+            f'cp -r {self.exe_dir}/FastEddy .',
+            f'cp -r {self.data_dir}/Example02_CBL_short_8gpu.in .',
+            'module list'
+            #'module --force purge',
+            #'module load ncarenv/24.12 nvhpc/24.11 cuda/12.3.2 ncarcompilers/1.0.0 openmpi/5.0.6 -netcdf netcdf-mpi/4.9.2 parallel-netcdf/1.14.0 parallelio/2.6.5 hdf5-mpi/1.12.3 ucx/1.17.0'
+        ]
+
+        # self.extra_resources ={
+        #     'gpu_type': 'a100'
+        # }
+        self.job.options = [
+            f'ngpus={self.num_tasks_per_node}',
+            'gpu_type=a100',
+            'mem=100gb'
+        ]
+    
+    # def set_pbs_select(self):
+    #     self.job.options = [
+    #         '-l select=2:mpiprocs=4:ncpus=4:ngpus=4:gpu_type=a100:mem=100gb'
+    #     ]
 
     @sanity_function
     def validate_output(self):

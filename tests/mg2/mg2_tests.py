@@ -162,10 +162,17 @@ class Mg2ProdScalingTest(Mg2BaseTest):
     sourcesdir = '.'
     executable = 'kernel.exe'
     
+    scale = parameter([1, 4, 8, 16, 32])
     # num_tasks = 16
     # num_tasks_per_node = 16
     # time_limit = '10m'
     
+    @run_after('init')
+    def set_num_tasks(self):
+        self.num_nodes = 1
+        self.num_tasks_per_node = self.scale
+        self.num_tasks = self.scale    
+
     @sanity_function
     def validate_output(self):
         """Check that simulation completed successfully"""

@@ -270,3 +270,121 @@ class CM1FullTest(CM1BaseTest):
 #             1,
 #             float
 #         )
+
+# ============================================================================
+# COMPILE AND RUN TEST
+# ============================================================================
+@rfm.simple_test
+class CM1ScaleTest(CM1BaseTest):
+    """Test that CM1 compiles and runs successfully"""
+    
+    descr = 'CM1 compile and run scaling text 1-32 CPUs single node'
+    tags = {'compile_run', 'core', 'scaling'}
+    
+    valid_systems = ['casper:compute']
+    #valid_partitions = []
+    valid_prog_environs = ['gnu', 'intel']
+
+    sourcesdir = '.'
+    executable = 'cm1.exe'
+
+    scale = parameter([4, 8, 16, 32])
+    #num_tasks = self.scale
+    #num_tasks_per_node = 32
+    time_limit = '15m'
+    
+    # Specify a queue here
+    #extra_resources = {
+    #    'queue': {'queue_name': 'R1878379'}
+    #}
+
+    # Request the cpu_type resource
+    extra_resources = {
+        'cpu_type': {'cpu_type': 'cascadelake'}
+    }
+
+    @run_after('init')
+    def set_num_tasks(self):
+        self.num_nodes = 1
+        self.num_tasks_per_node = self.scale
+        self.num_tasks = self.scale    
+
+    @run_before('compile')
+    def setup_build_environment(self):
+        """Set up build environment for CM1"""
+        self.build_system.max_concurrency = self.scale
+        
+        # Copy source files to stage directory
+        self.prebuild_cmds = [
+            f'cp -r {self.cm1_source_dir}/src .',
+            f'cp -r {self.cm1_source_dir}/run .',
+            'cd src',
+            'make clean'
+        ]
+
+        # Casper system flags
+        if self.current_system.name == 'casper':
+            if self.current_environ.name == 'gnu':
+                #'cp -f Makefile.gnu Makefile'
+                self.build_system.cppflags = ['cpp', '-C', '-P', '-traditional', '-Wno-invalid-pp-token', '-ffreestanding']
+                self.build_system.options = [
+                    'OPTS="-ffree-form -ffree-line-length-none -O2 -finline-functions -fallow-argument-mismatch"',
+                    'DM="-DMPI"'
+                ]
+            elif self.current_environ.name == 'intel':
+                self.build_system.cppflags = ['-O3', '-ip', '-assume byterecl', '-fp-model precise', '-ftz', '-no-fma']
+                self.build_system.options = [
+                    'OPTS="-O3 -ip -assume byterecl -fp-model precise -ftz -no-fma"',
+                    'DM="-DMPI"'
+                ]
+            # Linking NetCDF
+            self.build_system.ldflags = ['-lnetcdf']
+
+    # @run_before('run')
+    # def configure_job(self):
+    #     """Configure job submission and environment"""
+        
+    #     # Configure PBS to wait
+    #     self.job.options = ['-Wblock=true']
+        
+    #     # Set poll interval
+    #     self.job.poll_interval = 30
+    
+    #def setup_from_compile(self):
+        """Configure namelist for quick test"""
+        # Modify namelist.input for a quick 2D test
+        self.prerun_cmds = [
+            # Nav to run dir with exe and namelist
+            f'cd {self.stagedir}/run'
+            #f'cp ./run/cm1.exe .',
+            #f'cp ./run/config_files/squall_line/namelist.input .'
+        ]
+
+    # def setup_namelist(self):
+    #     self.prerun_cmds.extend([
+    #         f'cd run'
+    #     ])
+
+    @run_after('run')
+    def wait_for_completion(self):
+        import time
+        time.sleep(60)
+
+    @sanity_function
+    def validate_output(self):
+        """Check that simulation completed successfully"""
+        return sn.assert_found(
+            r'approximate core-hours',
+            self.stdout,
+            msg='CM1 did not terminate normally'
+        )
+    
+    @performance_function('s')
+    def total_time(self):
+        """Extract total simulation time in seconds"""
+        return sn.extractsingle(
+            r'Total time:\s+(\S+)',
+            self.stdout,
+            1,
+            float
+        )

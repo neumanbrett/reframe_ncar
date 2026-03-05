@@ -15,6 +15,9 @@ casper_currentmodules_default = ['ncarenv/24.12', 'intel/2024.2.1', 'openmpi/5.0
 casper_lastmodules_default = ['ncarenv/23.10', 'intel/2023.2.1', 'openmpi/4.1.6', 'ncarcompilers/1.0.0', 'cuda/12.2.1', 'netcdf/4.9.2', 'hdf5/1.12.2', 'ucx/1.14.1']
 casper_devmodules_default = ['ncarenv/25.10', 'intel/2025.2.1', 'openmpi/5.0.8', 'ncarcompilers/1.1.0', 'cuda/12.9.0', 'netcdf/4.9.3', 'hdf5/1.14.6', 'ucx/1.19.0']
 
+casper_devmodules_intel = ['ncarenv/25.10', 'intel/2025.2.1', 'openmpi/5.0.8', 'ncarcompilers/1.1.0', 'cuda/12.9.0', 'netcdf/4.9.3', 'hdf5/1.14.6', 'ucx/1.19.0']
+casper_devmodules_gnu = ['ncarenv/25.10', 'gcc/14.3.0', 'openmpi/5.0.8', 'ncarcompilers/1.1.0', 'cuda/12.9.0', 'netcdf/4.9.3', 'hdf5/1.14.6', 'ucx/1.19.0']
+
 casper_currentmodules_intel = ['ncarenv/24.12', 'intel/2024.2.1', 'openmpi/5.0.6', 'ncarcompilers/1.0.0', 'cuda/12.3.2', 'netcdf/4.9.2', 'hdf5/1.12.3', 'ucx/1.17.0']
 casper_currentmodules_gnu = ['ncarenv/24.12', 'gcc/12.4.0', 'openmpi/5.0.6', 'ncarcompilers/1.0.0', 'cuda/12.3.2', 'netcdf/4.9.2', 'hdf5/1.12.3', 'ucx/1.17.0']
 
@@ -47,6 +50,21 @@ site_configuration = {
                     'environs': ['gnu-serial'],
                     'max_jobs': 100
                 },
+                {
+                    'name': 'compute-oldhtc',
+                    'descr': 'Compute nodes',
+                    'scheduler': 'pbs',
+                    'launcher': 'mpirun',
+                    'access': access_project_casper,
+                    'environs': ['gnu', 'intel'],
+                    'max_jobs': 100,
+                    'resources': [
+                        {
+                            'name': 'cpu_type',
+                            'options': [':cpu_type={cpu_type}']
+                        }
+                    ]
+                },
 
                 {
                     'name': 'gpu',
@@ -74,9 +92,11 @@ site_configuration = {
                     'environs': ['cuda', 'cuda-last', 'cuda-dev'],
                     'max_jobs': 10,
                     'resources': [
+                        # {
+                        #     'name': 'gpu',
+                        #     'options': [':ngpus={num_gpus}']
+                        # },
                         {
-                            'name': 'gpu',
-                            'options': [':ngpus={num_gpus}'],
                             'name': 'gputype',
                             'options': [':gpu_type={gpu_type}']
                         }
@@ -91,7 +111,7 @@ site_configuration = {
             'cc': 'mpicc',
             'cxx': 'mpicxx',
             'ftn': 'mpif90',
-            'modules': casper_currentmodules_gnu
+            'modules': casper_devmodules_gnu
         },
         {
             'name': 'gnu-serial',
@@ -105,7 +125,7 @@ site_configuration = {
             'cc': 'mpicc',
             'cxx': 'mpicxx',
             'ftn': 'mpif90',
-            'modules': casper_currentmodules_intel
+            'modules': casper_devmodules_intel
         },
         {
             'name': 'intel-last',
