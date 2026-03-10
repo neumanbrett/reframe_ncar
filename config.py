@@ -32,26 +32,12 @@ site_configuration = {
             'hostnames': ['casper-login*'],
             'modules_system': 'lmod',
             'partitions': [
+                ######################
+                ### CPU Partitions ###
+                ######################
                 {
+                    # Any compute node without a GPU that uses MPI
                     'name': 'compute',
-                    'descr': 'Compute nodes',
-                    'scheduler': 'pbs',
-                    'launcher': 'mpirun',
-                    'access': access_project_casper,
-                    'environs': ['gnu', 'intel'],
-                    'max_jobs': 100
-                },
-                                {
-                    'name': 'compute-serial',
-                    'descr': 'Compute nodes',
-                    'scheduler': 'pbs',
-                    'launcher': 'local',
-                    'access': ['-A SCSG0001', '-q casper'],
-                    'environs': ['gnu-serial'],
-                    'max_jobs': 100
-                },
-                {
-                    'name': 'compute-oldhtc',
                     'descr': 'Compute nodes',
                     'scheduler': 'pbs',
                     'launcher': 'mpirun',
@@ -61,12 +47,33 @@ site_configuration = {
                     'resources': [
                         {
                             'name': 'cpu_type',
-                            'options': [':cpu_type={cpu_type}']
+                            'options': [':cpu_type={cpu_type}'],
+                            'name': 'mpi_ranks',
+                            'options': [':mpiprocs={mpiprocs}'],
+                            'name': 'openmp_threads',
+                            'options': [':omp={openmp_threads}'],
+                            'name': 'mem',
+                            'options': [':mem={mem}'],
+                            'name': 'host',
+                            'options': [':host={hostname}'],
                         }
                     ]
                 },
-
                 {
+                    'name': 'compute-serial',
+                    'descr': 'Compute nodes',
+                    'scheduler': 'pbs',
+                    'launcher': 'local',
+                    'access': ['-A SCSG0001', '-q casper'],
+                    'environs': ['gnu-serial'],
+                    'max_jobs': 100
+                },
+
+                ######################
+                ### GPU Partitions ###
+                ######################
+                {
+                    # Single GPU
                     'name': 'gpu',
                     'descr': 'Single GPU, Single Node',
                     'scheduler': 'pbs',
@@ -76,13 +83,19 @@ site_configuration = {
                     'max_jobs': 10,
                     'resources': [
                         {
-                            'name': 'gpu',
+                            'name': 'gpu_count',
                             'options': [':ngpus={num_gpus}'],
                             'name': 'gpu_type',
-                            'options': [':gpu_type={gpu_type}']
+                            'options': [':gpu_type={gpu_type}'],
+                            'name': 'mpi_ranks',
+                            'options': [':mpiprocs={mpiprocs}'],
+                            'name': 'mem',
+                            'options': [':mem={mem}']
                         }
                     ]
                 },
+
+                # Multiple GPU with MPI
                 {
                     'name': 'gpu-mpi',
                     'descr': 'Multi-GPU',
@@ -92,13 +105,15 @@ site_configuration = {
                     'environs': ['cuda', 'cuda-last', 'cuda-dev'],
                     'max_jobs': 10,
                     'resources': [
-                        # {
-                        #     'name': 'gpu',
-                        #     'options': [':ngpus={num_gpus}']
-                        # },
                         {
-                            'name': 'gputype',
-                            'options': [':gpu_type={gpu_type}']
+                            'name': 'gpu_count',
+                            'options': [':ngpus={num_gpus}'],
+                            'name': 'gpu_type',
+                            'options': [':gpu_type={gpu_type}'],
+                            'name': 'mpi_ranks',
+                            'options': [':mpiprocs={mpiprocs}'],
+                            'name': 'mem',
+                            'options': [':mem={mem}']
                         }
                     ]
                 }
