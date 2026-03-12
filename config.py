@@ -10,7 +10,7 @@ site_configuration = {
         {
             'name': 'casper',
             'descr': 'HPC Cluster',
-            'hostnames': ['casper-login*'],
+            'hostnames': ['crlogin*'],
             'modules_system': 'lmod',
             'partitions': [
                 ######################
@@ -26,18 +26,11 @@ site_configuration = {
                     'environs': ['gnu', 'intel'],
                     'max_jobs': 100,
                     'resources': [
-                        {
-                            'name': 'cpu_type',
-                            'options': [':cpu_type={cpu_type}'],
-                            'name': 'mpi_ranks',
-                            'options': [':mpiprocs={mpiprocs}'],
-                            'name': 'openmp_threads',
-                            'options': [':omp={openmp_threads}'],
-                            'name': 'mem',
-                            'options': [':mem={mem}'],
-                            'name': 'host',
-                            'options': [':host={hostname}'],
-                        }
+                        {'name': 'cpu_type',       'options': ['cpu_type={cpu_type}']},
+                        {'name': 'mpi_ranks',      'options': ['mpiprocs={mpiprocs}']},
+                        {'name': 'openmp_threads', 'options': ['omp={openmp_threads}']},
+                        {'name': 'mem',            'options': ['mem={mem}']},
+                        {'name': 'host',           'options': ['host={hostname}']},
                     ]
                 },
                 {
@@ -63,16 +56,10 @@ site_configuration = {
                     'environs': ['cuda', 'cuda-last', 'cuda-dev'],
                     'max_jobs': 10,
                     'resources': [
-                        {
-                            'name': 'gpu_count',
-                            'options': [':ngpus={num_gpus}'],
-                            'name': 'gpu_type',
-                            'options': [':gpu_type={gpu_type}'],
-                            'name': 'mpi_ranks',
-                            'options': [':mpiprocs={mpiprocs}'],
-                            'name': 'mem',
-                            'options': [':mem={mem}']
-                        }
+                        {'name': 'gpu_count',  'options': ['ngpus={num_gpus}']},
+                        {'name': 'gpu_type',   'options': ['gpu_type={gpu_type}']},
+                        {'name': 'mpi_ranks',  'options': ['mpiprocs={mpiprocs}']},
+                        {'name': 'mem',        'options': ['mem={mem}']},
                     ]
                 },
 
@@ -86,16 +73,10 @@ site_configuration = {
                     'environs': ['cuda', 'cuda-last', 'cuda-dev'],
                     'max_jobs': 10,
                     'resources': [
-                        {
-                            'name': 'gpu_count',
-                            'options': [':ngpus={num_gpus}'],
-                            'name': 'gpu_type',
-                            'options': [':gpu_type={gpu_type}'],
-                            'name': 'mpi_ranks',
-                            'options': [':mpiprocs={mpiprocs}'],
-                            'name': 'mem',
-                            'options': [':mem={mem}']
-                        }
+                        {'name': 'gpu_count',  'options': ['ngpus={num_gpus}']},
+                        {'name': 'gpu_type',   'options': ['gpu_type={gpu_type}']},
+                        {'name': 'mpi_ranks',  'options': ['mpiprocs={mpiprocs}']},
+                        {'name': 'mem',        'options': ['mem={mem}']},
                     ]
                 }
             ]

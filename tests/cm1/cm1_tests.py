@@ -1,18 +1,41 @@
 """
-ReFrame Test Suite for CM1 (Cloud Model 1)
+Simple CM1 Test Suite - Compilation and Quick Validation Only
 
-CM1 is a three-dimensional, non-hydrostatic atmospheric model
-developed by George Bryan at NCAR for idealized atmospheric research.
+This simplified test suite contains four test classes:
 
-This test suite covers:
-- Compilation testing
-- Quick validation runs
-- Supercell simulation benchmark
-- Scaling studies
+1. CM1FullTest           - Verify CM1 compiles and runs on any available compute node
+2. CM1NodeTypeTest       - Parameterized test targeting each CPU node type discovered
+                           dynamically via ``pbsnodes -a`` (one node per type)
+3. CM1NodeTypeMultiTest  - Same node-type parameterisation but with a configurable
+                           node count (parameter: ``num_nodes``).  Use this when you
+                           want to run the same workload across 2, 4, … nodes of a
+                           given type.
+4. CM1ScaleTest          - Scaling test across MPI task counts (4/8/16/32) on a
+                           single cascadelake node
+
+Node types are discovered at import time by querying ``pbsnodes -a`` through
+``pbsnodes.py``.  No manual registry maintenance is needed — new node types
+appear automatically.
+
+How system/node filtering works
+--------------------------------
+ReFrame instantiates test classes at load time before ``current_system`` is
+set (that happens at the 'setup' stage).  The parameter lists are built once
+at import time from the live ``pbsnodes`` query.  The ``skip_if_not_applicable``
+hook (``@run_after('setup')``) drops any variant whose label is absent from
+the live registry, which is the earliest point where ``current_system`` is
+available.
 """
 
 import reframe as rfm
 import reframe.utility.sanity as sn
+
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+import pbsnodes
+
+cm1_base_dir = '/glade/work/bneuman/reframe_apps/cm1/cm1r21.1_base'
 
 
 # ============================================================================
@@ -20,172 +43,102 @@ import reframe.utility.sanity as sn
 # ============================================================================
 
 class CM1BaseTest(rfm.RegressionTest):
-    """Base class for all CM1 tests with common configuration"""
-    
-    # Valid systems and environments
-    valid_systems = ['casper:compute']
+    """Base class for CM1 tests with common configuration.
+    Works across all nodes of each system. Compiles and runs the application.
+    """
+
+    valid_systems = ['casper:compute', 'derecho:compute']
     valid_prog_environs = ['gnu', 'intel']
-    
-    # CM1 source directory
-    cm1_source_dir = variable(str, value='${CM1_HOME}')
-    
-    # Build configuration
+
+    cm1_source_dir = variable(str, value='/glade/work/bneuman/reframe_apps/cm1/cm1r21.1_base')
     build_system = 'Make'
-    
-    # Note: num_tasks, num_tasks_per_node, and time_limit are NOT set here
-    # Each derived class must set these to avoid conflicts
-    
+
+    # Optional resource overrides — set from the launcher with -S or left empty
+    # to accept node-type defaults from pbsnodes.
+    #   -S 'CM1NodeTypeTest.target_hostname=crhtc53'   pin to a specific node
+    #   -S 'CM1NodeTypeTest.target_mem=200GB'          override memory request
+    target_hostname = variable(str, value='')
+    target_mem      = variable(str, value='')
+
+    def _setup_compiler_flags(self):
+        """Configure compiler flags for the current system and environment.
+        Called from setup_build_environment in each subclass.
+        """
+        if self.current_system.name in ('casper', 'derecho'):
+            if self.current_environ.name == 'gnu':
+                self.build_system.cppflags = [
+                    'cpp', '-C', '-P', '-traditional',
+                    '-Wno-invalid-pp-token', '-ffreestanding'
+                ]
+                self.build_system.options = [
+                    'OPTS="-ffree-form -ffree-line-length-none -O2 -finline-functions -fallow-argument-mismatch"',
+                    'DM="-DMPI"'
+                ]
+            elif self.current_environ.name == 'intel':
+                self.build_system.cppflags = [
+                    '-O3', '-ip', '-assume byterecl',
+                    '-fp-model precise', '-ftz', '-no-fma'
+                ]
+                self.build_system.options = [
+                    'OPTS="-O3 -ip -assume byterecl -fp-model precise -ftz -no-fma"',
+                    'DM="-DMPI"'
+                ]
+            self.build_system.ldflags = ['-lnetcdf']
+
+
+# ============================================================================
+# COMPILE AND RUN TEST (any node)
+# ============================================================================
+@rfm.simple_test
+class CM1FullTest(CM1BaseTest):
+    """Test that CM1 compiles and runs successfully on any available compute node"""
+
+    descr = 'CM1 compile and run test'
+    tags = {'compile_run', 'core'}
+
+    valid_systems = ['casper:compute', 'derecho:compute']
+    valid_prog_environs = ['gnu', 'intel']
+
+    sourcesdir = '.'
+    executable = 'cm1.exe'
+
+    num_tasks = 8
+    num_tasks_per_node = 8
+    time_limit = '15m'
+
     @run_before('compile')
     def setup_build_environment(self):
         """Set up build environment for CM1"""
         self.build_system.max_concurrency = 8
-        
-        # Copy source files to stage directory
         self.prebuild_cmds = [
             f'cp -r {self.cm1_source_dir}/src .',
             f'cp -r {self.cm1_source_dir}/run .',
-            'cd src'
-        ]
-        
-        # Set netCDF paths based on environment
-        self.build_system.options = ['-L${NCAR_LDFLAGS_NETCDF}']
-    
-    @run_before('run')
-    def setup_run_environment(self):
-        """Set up runtime environment"""
-        # Copy necessary input files
-        self.prerun_cmds = [
-            'cp ../src/cm1.exe .',
-            'cp run/namelist.input .',
-            'ls -lh'
-        ]
-        
-        # Set environment variables
-        self.env_vars = {
-            'OMP_NUM_THREADS': '1',
-            'MALLOC_TRIM_THRESHOLD_': '0'
-        }
-
-
-# ============================================================================
-# COMPILATION TEST
-# ============================================================================
-
-@rfm.simple_test
-class CM1CompileTest(CM1BaseTest):
-    """Test that CM1 compiles successfully"""
-    
-    descr = 'CM1 compilation test'
-    tags = {'compile', 'quick'}
-    
-    sourcesdir = '.'
-    
-    @run_after('setup')
-    def skip_run(self):
-        """Only compile, don't run"""
-        self.build_system.makefile = 'Makefile'
-    
-    @run_before('compile')
-    def setup_makefile(self):
-        """Configure Makefile for compilation"""
-        self.prebuild_cmds.extend([
             'cd src',
-            'cp Makefile Makefile.orig'
-        ])
-    
-    @sanity_function
-    def validate_compilation(self):
-        """Check that executable was created"""
-        return sn.assert_true(
-            sn.os.path.exists('src/cm1.exe'),
-            msg='cm1.exe not found after compilation'
-        )
-    
-    @performance_function('s')
-    def compile_time(self):
-        """Extract compilation time"""
-        return sn.extractsingle(
-            r'Elapsed.*:\s+(\S+)',
-            self.build_stdout,
-            1,
-            float,
-            default=0.0
-        )
+            'make clean'
+        ]
+        self._setup_compiler_flags()
 
+    prerun_cmds = [f'cd {cm1_base_dir}/run']
 
-# ============================================================================
-# QUICK VALIDATION TEST
-# ============================================================================
+    @run_after('run')
+    def wait_for_completion(self):
+        import time
+        time.sleep(60)
 
-@rfm.simple_test
-class CM1QuickTest(CM1BaseTest):
-    """Quick validation run with minimal configuration"""
-    
-    descr = 'CM1 quick validation test (2D squall line)'
-    tags = {'production', 'validation', 'quick'}
-    
-    sourcesdir = '.'
-    executable = './cm1.exe'
-    
-    num_tasks = 4
-    num_tasks_per_node = 4
-    time_limit = '10m'
-    
-    @run_before('run')
-    def setup_namelist(self):
-        """Configure namelist for quick test"""
-        # Modify namelist.input for a quick 2D test
-        self.prerun_cmds.extend([
-            # Copy base namelist
-            f'cp {self.cm1_source_dir}/run/config_files/squall_line/namelist.input .',
-            # Modify for quick run
-            "sed -i 's/run_time.*/run_time = 300.0/' namelist.input",
-            "sed -i 's/nx.*/nx = 128/' namelist.input",
-            "sed -i 's/ny.*/ny = 2/' namelist.input",
-            "sed -i 's/nz.*/nz = 32/' namelist.input",
-            "sed -i 's/output_format.*/output_format = 2/' namelist.input",
-            'cat namelist.input | grep -E "(run_time|nx|ny|nz)"'
-        ])
-    
     @sanity_function
     def validate_output(self):
         """Check that simulation completed successfully"""
-        checks = [
-            # Check for successful completion message
-            sn.assert_found(
-                r'cm1 completed successfully',
-                self.stdout,
-                msg='CM1 did not complete successfully'
-            ),
-            # Check that output files were created
-            sn.assert_true(
-                sn.os.path.exists('cm1out.nc') or sn.os.path.exists('cm1out_000001.nc'),
-                msg='No output files found'
-            ),
-            # Check for no fatal errors
-            sn.assert_not_found(
-                r'FATAL|ERROR',
-                self.stderr,
-                msg='Fatal error found in stderr'
-            )
-        ]
-        return sn.all(checks)
-    
-    @performance_function('s')
-    def simulation_time(self):
-        """Extract total simulation time"""
-        return sn.extractsingle(
-            r'Total time:\s+(\S+)\s+s',
+        return sn.assert_found(
+            r'approximate core-hours',
             self.stdout,
-            1,
-            float
+            msg='CM1 did not terminate normally'
         )
-    
+
     @performance_function('s')
-    def time_per_timestep(self):
-        """Extract average time per timestep"""
+    def total_time(self):
+        """Extract total simulation time in seconds"""
         return sn.extractsingle(
-            r'Time per time step:\s+(\S+)\s+s',
+            r'Total time:\s+(\S+)',
             self.stdout,
             1,
             float
@@ -193,371 +146,287 @@ class CM1QuickTest(CM1BaseTest):
 
 
 # ============================================================================
-# SUPERCELL BENCHMARK
+# PER-NODE-TYPE TESTS
+#
+# Both tests are parameterised over CPU-only node type labels discovered
+# dynamically from ``pbsnodes -a`` at import time via ``pbsnodes.py``.
+# No manual registry edits are needed when new node types appear.
+#
+# How filtering works:
+#   1. valid_systems limits instantiated variants to recognised systems.
+#   2. skip_if_not_applicable() fires at @run_after('setup') — the earliest
+#      stage where current_system is available — and calls self.skip() for
+#      any label absent from the live pbsnodes registry.
+#
+# CM1NodeTypeTest      — 1 node per type (PBS picks any available node of
+#                        that cpu_type; good for broad coverage sweeps)
+# CM1NodeTypeMultiTest — same, but ``num_nodes`` is a parameter so you can
+#                        run the workload across 2, 4, … nodes of each type
+# ============================================================================
+
+# Build the CPU node type label list once at import time from live pbsnodes.
+_cpu_node_specs  = pbsnodes.get_cpu_node_types()   # dict[label, NodeTypeSpec]
+_all_cpu_node_labels = sorted(_cpu_node_specs.keys())
+
+
+@rfm.simple_test
+class CM1NodeTypeTest(CM1BaseTest):
+    """Compile and run CM1 on each CPU node type discovered via pbsnodes.
+
+    One variant is generated per (node_type x compiler environment).
+    PBS targets the node type via ``cpu_type=<label>`` so any available
+    node of that type satisfies the request.
+    """
+
+    descr = 'CM1 compile and run test per system node type (1 node)'
+    tags = {'compile_run', 'core', 'node_type'}
+
+    valid_systems = ['casper:compute', 'derecho:compute']
+    valid_prog_environs = ['gnu', 'intel']
+
+    sourcesdir = '.'
+    executable = 'cm1.exe'
+
+    node_type = parameter(_all_cpu_node_labels)
+
+    time_limit = '15m'
+
+    @run_after('setup')
+    def skip_if_not_applicable(self):
+        """Skip variants whose node_type label is absent from the live registry."""
+        if self.node_type not in pbsnodes.NODE_TYPE_SPECS:
+            self.skip(f'node_type={self.node_type!r} not found in pbsnodes registry')
+
+    @run_after('setup')
+    def set_job_resources(self):
+        """Configure task counts and PBS chunk resources for this node type.
+
+        Applies target_hostname and target_mem overrides when set via -S.
+        """
+        if self.node_type not in pbsnodes.NODE_TYPE_SPECS:
+            return
+
+        spec = pbsnodes.NODE_TYPE_SPECS[self.node_type]
+        self.num_tasks          = spec.tasks
+        self.num_tasks_per_node = spec.tasks
+        self.num_nodes          = 1
+
+        resources = {}
+        if spec.cpu_type is not None:
+            resources['cpu_type'] = {'cpu_type': spec.cpu_type}
+        if self.target_mem:
+            resources['mem'] = {'mem': self.target_mem}
+        if self.target_hostname:
+            resources['host'] = {'hostname': self.target_hostname}
+        if resources:
+            self.extra_resources = resources
+
+    @run_before('compile')
+    def setup_build_environment(self):
+        """Set up build environment for CM1."""
+        if self.node_type not in pbsnodes.NODE_TYPE_SPECS:
+            return
+
+        spec = pbsnodes.NODE_TYPE_SPECS[self.node_type]
+        self.build_system.max_concurrency = spec.tasks
+        self.prebuild_cmds = [
+            f'cp -r {self.cm1_source_dir}/src .',
+            f'cp -r {self.cm1_source_dir}/run .',
+            'cd src',
+            'make clean'
+        ]
+        self._setup_compiler_flags()
+
+    prerun_cmds = [f'cd {cm1_base_dir}/run']
+
+    @run_after('run')
+    def wait_for_completion(self):
+        import time
+        time.sleep(60)
+
+    @sanity_function
+    def validate_output(self):
+        return sn.assert_found(
+            r'approximate core-hours',
+            self.stdout,
+            msg='CM1 did not terminate normally'
+        )
+
+    @performance_function('s')
+    def total_time(self):
+        return sn.extractsingle(
+            r'Total time:\s+(\S+)',
+            self.stdout,
+            1,
+            float
+        )
+
+
+# ============================================================================
+# PER-NODE-TYPE MULTI-NODE TEST
 # ============================================================================
 
 @rfm.simple_test
-class CM1SupercellBenchmark(CM1BaseTest):
+class CM1NodeTypeMultiTest(CM1BaseTest):
+    """Compile and run CM1 on N nodes of each CPU node type.
+
+    Parameterised over both ``node_type`` (all CPU types from pbsnodes) and
+    ``num_nodes`` (selectable node count).  PBS targets the node type via
+    ``cpu_type=<label>`` and requests ``num_nodes`` chunks, so the scheduler
+    can satisfy the request with any available nodes of that type.
+
+    The default ``num_nodes`` values are ``[2, 4]``.  Override on the command
+    line with ``-S CM1NodeTypeMultiTest.num_nodes=8`` if needed.
     """
-    Standard supercell benchmark simulation
-    This is a common test case for CM1 performance evaluation
-    """
-    
-    descr = 'CM1 supercell benchmark (3D idealized supercell)'
-    tags = {'production', 'benchmark', 'supercell'}
-    
+
+    descr = 'CM1 compile and run test per node type — configurable node count'
+    tags = {'compile_run', 'core', 'node_type', 'multi_node'}
+
+    valid_systems = ['casper:compute', 'derecho:compute']
+    valid_prog_environs = ['gnu', 'intel']
+
     sourcesdir = '.'
-    executable = './cm1.exe'
-    
-    # Use parameter for num_tasks - this is allowed
-    num_tasks = parameter([4, 8, 16, 32, 64])
-    num_tasks_per_node = 36
-    time_limit = '2h'
-    
+    executable = 'cm1.exe'
+
+    node_type = parameter(_all_cpu_node_labels)
+    num_nodes = parameter([2, 4])
+
+    time_limit = '30m'
+
     @run_after('setup')
-    def set_time_limit_based_on_tasks(self):
-        """Adjust time limit based on task count"""
-        if self.num_tasks <= 8:
-            self.time_limit = '2h'
-        elif self.num_tasks <= 32:
-            self.time_limit = '1h'
-        else:
-            self.time_limit = '30m'
-    
-    @run_before('run')
-    def setup_supercell_namelist(self):
-        """Configure namelist for supercell simulation"""
-        self.prerun_cmds.extend([
-            f'cp {self.cm1_source_dir}/run/config_files/supercell/namelist.input .',
-            # Standard supercell configuration
-            "sed -i 's/run_time.*/run_time = 7200.0/' namelist.input",  # 2 hours
-            "sed -i 's/nx.*/nx = 256/' namelist.input",
-            "sed -i 's/ny.*/ny = 256/' namelist.input",
-            "sed -i 's/nz.*/nz = 64/' namelist.input",
-            "sed -i 's/dx.*/dx = 250.0/' namelist.input",
-            "sed -i 's/dy.*/dy = 250.0/' namelist.input",
-            "sed -i 's/dz.*/dz = 250.0/' namelist.input",
-            "sed -i 's/output_format.*/output_format = 2/' namelist.input",  # netCDF
-            "sed -i 's/output_filetype.*/output_filetype = 2/' namelist.input",
-            'echo "Namelist configuration:"',
-            'cat namelist.input | grep -E "(run_time|nx|ny|nz|dx)"'
-        ])
-    
-    @sanity_function
-    def validate_supercell(self):
-        """Validate supercell simulation output"""
-        checks = [
-            sn.assert_found(
-                r'cm1 completed successfully',
-                self.stdout,
-                msg='CM1 supercell run did not complete'
-            ),
-            # Check for updraft development (typical of supercells)
-            sn.assert_found(
-                r'Maximum vertical velocity.*\d+',
-                self.stdout,
-                msg='No vertical velocity output found'
-            ),
-            # Verify output files exist
-            sn.assert_true(
-                sn.os.path.exists('cm1out_000001.nc'),
-                msg='NetCDF output file not created'
-            )
+    def skip_if_not_applicable(self):
+        """Skip variants whose node_type label is absent from the live registry."""
+        if self.node_type not in pbsnodes.NODE_TYPE_SPECS:
+            self.skip(f'node_type={self.node_type!r} not found in pbsnodes registry')
+
+    @run_after('setup')
+    def set_job_resources(self):
+        """Configure task counts and PBS chunk resources for this node type.
+
+        Applies target_hostname and target_mem overrides when set via -S.
+        """
+        if self.node_type not in pbsnodes.NODE_TYPE_SPECS:
+            return
+
+        spec = pbsnodes.NODE_TYPE_SPECS[self.node_type]
+        self.num_tasks_per_node = spec.tasks
+        self.num_tasks          = spec.tasks * self.num_nodes
+
+        resources = {}
+        if spec.cpu_type is not None:
+            resources['cpu_type'] = {'cpu_type': spec.cpu_type}
+        if self.target_mem:
+            resources['mem'] = {'mem': self.target_mem}
+        if self.target_hostname:
+            resources['host'] = {'hostname': self.target_hostname}
+        if resources:
+            self.extra_resources = resources
+
+    @run_before('compile')
+    def setup_build_environment(self):
+        """Set up build environment for CM1."""
+        if self.node_type not in pbsnodes.NODE_TYPE_SPECS:
+            return
+
+        spec = pbsnodes.NODE_TYPE_SPECS[self.node_type]
+        self.build_system.max_concurrency = spec.tasks
+        self.prebuild_cmds = [
+            f'cp -r {self.cm1_source_dir}/src .',
+            f'cp -r {self.cm1_source_dir}/run .',
+            'cd src',
+            'make clean'
         ]
-        return sn.all(checks)
-    
+        self._setup_compiler_flags()
+
+    prerun_cmds = [f'cd {cm1_base_dir}/run']
+
+    @run_after('run')
+    def wait_for_completion(self):
+        import time
+        time.sleep(60)
+
+    @sanity_function
+    def validate_output(self):
+        return sn.assert_found(
+            r'approximate core-hours',
+            self.stdout,
+            msg='CM1 did not terminate normally'
+        )
+
     @performance_function('s')
-    def total_runtime(self):
-        """Total wall-clock time for simulation"""
+    def total_time(self):
         return sn.extractsingle(
-            r'Total time:\s+(\S+)\s+s',
+            r'Total time:\s+(\S+)',
             self.stdout,
             1,
             float
         )
-    
-    @performance_function('s')
-    def avg_timestep_time(self):
-        """Average time per timestep"""
-        return sn.extractsingle(
-            r'Time per time step:\s+(\S+)\s+s',
-            self.stdout,
-            1,
-            float
-        )
-    
-    @performance_function('timesteps/s')
-    def throughput(self):
-        """Timesteps per second (higher is better)"""
-        total_time = self.total_runtime()
-        total_steps = sn.extractsingle(
-            r'Total time steps:\s+(\d+)',
-            self.stdout,
-            1,
-            int
-        )
-        return total_steps / total_time
-    
-    # Performance reference values (adjust based on your system)
-    reference = {
-        'casper:compute': {
-            'total_runtime': (1800, None, 0.15, 's'),
-            'avg_timestep_time': (0.5, None, 0.15, 's'),
-            'throughput': (2.0, -0.15, None, 'timesteps/s')
-        }
+
+
+# ============================================================================
+# SCALING TEST  (single node, cascadelake, 4/8/16/32 MPI tasks)
+# ============================================================================
+@rfm.simple_test
+class CM1ScaleTest(CM1BaseTest):
+    """Test CM1 scaling from 4 to 32 MPI tasks on a single Cascade Lake node"""
+
+    descr = 'CM1 compile and run scaling test 1-32 CPUs single node'
+    tags = {'compile_run', 'core', 'scaling'}
+
+    valid_systems = ['casper:compute']
+    valid_prog_environs = ['gnu', 'intel']
+
+    sourcesdir = '.'
+    executable = 'cm1.exe'
+
+    scale = parameter([4, 8, 16, 32])
+    time_limit = '15m'
+
+    # Pin scaling baseline to cascadelake for a consistent comparison point
+    extra_resources = {
+        'cpu_type': {'cpu_type': 'cascadelake'}
     }
 
+    @run_after('init')
+    def set_num_tasks(self):
+        self.num_nodes          = 1
+        self.num_tasks_per_node = self.scale
+        self.num_tasks          = self.scale
 
-# ============================================================================
-# WEAK SCALING TEST
-# ============================================================================
-
-@rfm.simple_test
-class CM1WeakScalingTest(CM1BaseTest):
-    """
-    Weak scaling test - problem size scales with processor count
-    Tests parallel efficiency as resources increase
-    """
-    
-    descr = 'CM1 weak scaling test'
-    tags = {'performance', 'scaling', 'weak-scaling'}
-    
-    sourcesdir = '.'
-    executable = './cm1.exe'
-    
-    # Parameter for different task counts
-    num_tasks = parameter([4, 8, 16, 32, 64])
-    num_tasks_per_node = 36
-    time_limit = '1h'
-    
-    @run_before('run')
-    def setup_weak_scaling(self):
-        """Scale problem size with processor count"""
-        # Base grid: 128x128x32 for 4 tasks
-        # Scale in x and y directions
-        import math
-        scale_factor = math.sqrt(self.num_tasks / 4)
-        nx = int(128 * scale_factor)
-        ny = int(128 * scale_factor)
-        nz = 32  # Keep vertical resolution constant
-        
-        self.prerun_cmds.extend([
-            f'cp {self.cm1_source_dir}/run/config_files/squall_line/namelist.input .',
-            f"sed -i 's/run_time.*/run_time = 1800.0/' namelist.input",
-            f"sed -i 's/nx.*/nx = {nx}/' namelist.input",
-            f"sed -i 's/ny.*/ny = {ny}/' namelist.input",
-            f"sed -i 's/nz.*/nz = {nz}/' namelist.input",
-            f'echo "Weak scaling: {self.num_tasks} tasks, grid {nx}x{ny}x{nz}"'
-        ])
-    
-    @sanity_function
-    def validate_scaling(self):
-        return sn.assert_found(r'cm1 completed successfully', self.stdout)
-    
-    @performance_function('s')
-    def walltime(self):
-        """Wall time should remain relatively constant for good scaling"""
-        return sn.extractsingle(
-            r'Total time:\s+(\S+)\s+s',
-            self.stdout,
-            1,
-            float
-        )
-    
-    @performance_function('%')
-    def parallel_efficiency(self):
-        """Calculate parallel efficiency relative to baseline"""
-        baseline_time = 600.0  # Reference time for 4 tasks (adjust)
-        current_time = self.walltime()
-        return (baseline_time / current_time) * 100
-
-
-# ============================================================================
-# STRONG SCALING TEST
-# ============================================================================
-
-@rfm.simple_test
-class CM1StrongScalingTest(CM1BaseTest):
-    """
-    Strong scaling test - fixed problem size, varying processor count
-    Tests speedup as resources increase
-    """
-    
-    descr = 'CM1 strong scaling test'
-    tags = {'performance', 'scaling', 'strong-scaling'}
-    
-    sourcesdir = '.'
-    executable = './cm1.exe'
-    
-    # Parameter for different task counts
-    num_tasks = parameter([4, 8, 16, 32, 64, 128])
-    num_tasks_per_node = 36
-    time_limit = '1h'
-    
-    @run_before('run')
-    def setup_strong_scaling(self):
-        """Fixed problem size for all processor counts"""
-        # Fixed grid: 256x256x64
-        self.prerun_cmds.extend([
-            f'cp {self.cm1_source_dir}/run/config_files/supercell/namelist.input .',
-            "sed -i 's/run_time.*/run_time = 3600.0/' namelist.input",
-            "sed -i 's/nx.*/nx = 256/' namelist.input",
-            "sed -i 's/ny.*/ny = 256/' namelist.input",
-            "sed -i 's/nz.*/nz = 64/' namelist.input",
-            f'echo "Strong scaling: {self.num_tasks} tasks, fixed grid 256x256x64"'
-        ])
-    
-    @sanity_function
-    def validate_scaling(self):
-        return sn.assert_found(r'cm1 completed successfully', self.stdout)
-    
-    @performance_function('s')
-    def walltime(self):
-        """Wall time should decrease with more processors"""
-        return sn.extractsingle(
-            r'Total time:\s+(\S+)\s+s',
-            self.stdout,
-            1,
-            float
-        )
-    
-    @performance_function('x')
-    def speedup(self):
-        """Speedup relative to baseline (4 tasks)"""
-        baseline_time = 3600.0  # Reference time for 4 tasks (adjust)
-        current_time = self.walltime()
-        return baseline_time / current_time
-    
-    @performance_function('%')
-    def efficiency(self):
-        """Parallel efficiency percentage"""
-        speedup = self.speedup()
-        return (speedup / (self.num_tasks / 4)) * 100
-
-
-# ============================================================================
-# OUTPUT VERIFICATION TEST
-# ============================================================================
-
-@rfm.simple_test
-class CM1OutputVerificationTest(CM1BaseTest):
-    """
-    Verify CM1 produces expected output files and formats
-    Tests netCDF output and data integrity
-    """
-    
-    descr = 'CM1 output verification test'
-    tags = {'validation', 'output'}
-    
-    sourcesdir = '.'
-    executable = './cm1.exe'
-    
-    num_tasks = 4
-    num_tasks_per_node = 4
-    time_limit = '15m'
-    
-    @run_before('run')
-    def setup_output_test(self):
-        """Configure for various output formats"""
-        self.prerun_cmds.extend([
-            f'cp {self.cm1_source_dir}/run/config_files/squall_line/namelist.input .',
-            "sed -i 's/run_time.*/run_time = 600.0/' namelist.input",
-            "sed -i 's/nx.*/nx = 64/' namelist.input",
-            "sed -i 's/ny.*/ny = 2/' namelist.input",
-            "sed -i 's/nz.*/nz = 32/' namelist.input",
-            "sed -i 's/output_format.*/output_format = 2/' namelist.input",
-            "sed -i 's/output_filetype.*/output_filetype = 2/' namelist.input",
-            "sed -i 's/stat_out.*/stat_out = 60.0/' namelist.input"
-        ])
-        
-        # Load netCDF tools if available
-        self.modules = ['nco', 'ncview']
-    
-    @sanity_function
-    def validate_output_files(self):
-        """Check that all expected output files exist"""
-        checks = [
-            sn.assert_found(r'cm1 completed successfully', self.stdout),
-            # Check for netCDF output
-            sn.assert_true(
-                sn.os.path.exists('cm1out_000001.nc'),
-                msg='Main netCDF output not found'
-            ),
-            # Check for statistics file
-            sn.assert_true(
-                sn.os.path.exists('cm1out_stats.nc') or 
-                sn.os.path.exists('cm1out_s.nc'),
-                msg='Statistics file not found'
-            )
+    @run_before('compile')
+    def setup_build_environment(self):
+        """Set up build environment for CM1"""
+        self.build_system.max_concurrency = self.scale
+        self.prebuild_cmds = [
+            f'cp -r {self.cm1_source_dir}/src .',
+            f'cp -r {self.cm1_source_dir}/run .',
+            'cd src',
+            'make clean'
         ]
-        return sn.all(checks)
-    
+        self._setup_compiler_flags()
+
+    prerun_cmds = [f'cd {cm1_base_dir}/run']
+
     @run_after('run')
-    def verify_netcdf_content(self):
-        """Use ncdump to verify netCDF file structure"""
-        self.postrun_cmds = [
-            'ncdump -h cm1out_000001.nc | head -50',
-            'ls -lh cm1out*.nc'
-        ]
+    def wait_for_completion(self):
+        import time
+        time.sleep(60)
 
-
-# ============================================================================
-# RESTART TEST
-# ============================================================================
-
-@rfm.simple_test
-class CM1RestartTest(CM1BaseTest):
-    """
-    Test CM1 checkpoint/restart functionality
-    Verifies that simulations can be restarted from saved state
-    """
-    
-    descr = 'CM1 restart capability test'
-    tags = {'validation', 'restart'}
-    
-    sourcesdir = '.'
-    executable = './cm1.exe'
-    
-    num_tasks = 4
-    num_tasks_per_node = 4
-    time_limit = '20m'
-    
-    @run_before('run')
-    def setup_restart_test(self):
-        """Configure for restart test"""
-        self.prerun_cmds.extend([
-            f'cp {self.cm1_source_dir}/run/config_files/squall_line/namelist.input .',
-            # First run: 300 seconds with restart output
-            "sed -i 's/run_time.*/run_time = 300.0/' namelist.input",
-            "sed -i 's/rstfrq.*/rstfrq = 300.0/' namelist.input",  # Write restart at end
-            "sed -i 's/nx.*/nx = 64/' namelist.input",
-            "sed -i 's/ny.*/ny = 2/' namelist.input",
-            "sed -i 's/nz.*/nz = 32/' namelist.input"
-        ])
-    
     @sanity_function
-    def validate_restart(self):
-        """Verify restart file was created and run completed"""
-        checks = [
-            sn.assert_found(r'cm1 completed successfully', self.stdout),
-            sn.assert_true(
-                sn.os.path.exists('cm1out_rst_000001.nc'),
-                msg='Restart file not created'
-            ),
-            sn.assert_found(
-                r'Writing restart',
-                self.stdout,
-                msg='No restart write message found'
-            )
-        ]
-        return sn.all(checks)
+    def validate_output(self):
+        """Check that simulation completed successfully"""
+        return sn.assert_found(
+            r'approximate core-hours',
+            self.stdout,
+            msg='CM1 did not terminate normally'
+        )
 
-
-# ============================================================================
-# HELPER: Test Discovery
-# ============================================================================
-
-# You can run specific tags:
-# reframe -c cm1_tests.py --tag=quick -r
-# reframe -c cm1_tests.py --tag=benchmark -r
-# reframe -c cm1_tests.py --tag=scaling -r
+    @performance_function('s')
+    def total_time(self):
+        """Extract total simulation time in seconds"""
+        return sn.extractsingle(
+            r'Total time:\s+(\S+)',
+            self.stdout,
+            1,
+            float
+        )

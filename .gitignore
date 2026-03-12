@@ -1,3 +1,6 @@
 reframe/
-__pycache__/
-*/__pycache__/*
+
+# Python bytecode and caches
+*.pyc
+*.pyo
+**/__pycache__/
